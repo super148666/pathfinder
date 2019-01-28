@@ -7,7 +7,14 @@
 
 #include <cstdlib>
 #include <vector>
-#include <sensor_msgs/LaserScan.h>
+
+struct LaserScan {
+    double angle_max = 0.0;
+    double angle_min = 0.0;
+    double range_max = 0.0;
+    double angle_increment = 0.0;
+    std::vector<double> ranges;
+};
 
 class range_1d {
 private:
@@ -44,9 +51,9 @@ public:
 
     range_1d() = default;
 
-    range_1d(sensor_msgs::LaserScanConstPtr ls_ptr);
+    range_1d(LaserScan *ls_ptr);
 
-    range_1d(sensor_msgs::LaserScanConstPtr ls_ptr,
+    range_1d(LaserScan *ls_ptr,
              double desired_angle_max,
              double desired_angle_min,
              double processing_range);

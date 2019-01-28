@@ -4,7 +4,8 @@
 
 #include <deque>
 #include "pathfinder/range_1d.h"
-
+#include <cmath>
+#include <iostream>
 
 /**
  * range_1d::operator[]
@@ -22,7 +23,7 @@ double &range_1d::operator[](double angle) {
  *
  * @param ls_ptr - ros msg type pointer for laserscan
  */
-range_1d::range_1d(sensor_msgs::LaserScanConstPtr ls_ptr) {
+range_1d::range_1d(LaserScan *ls_ptr) {
     max_range = ls_ptr->range_max;
     resolution = ls_ptr->angle_increment;
     if (resolution > 0) {
@@ -55,7 +56,7 @@ range_1d::range_1d(sensor_msgs::LaserScanConstPtr ls_ptr) {
  * @param desired_angle_max - maximum constrains in angle
  * @param desired_angle_min - minimum constrains in angle
  */
-range_1d::range_1d(sensor_msgs::LaserScanConstPtr ls_ptr, double desired_angle_max, double desired_angle_min, double processing_range) {
+range_1d::range_1d(LaserScan *ls_ptr, double desired_angle_max, double desired_angle_min, double processing_range) {
     desired_angle_max = desired_angle_max / 180.0 *M_PI;
     desired_angle_min = desired_angle_min / 180.0 *M_PI;
     max_range = ls_ptr->range_max;
@@ -64,8 +65,15 @@ range_1d::range_1d(sensor_msgs::LaserScanConstPtr ls_ptr, double desired_angle_m
     if (resolution > 0) {
         max_angle = ls_ptr->angle_max;
         min_angle = ls_ptr->angle_min;
-        assert(max_angle > desired_angle_max);
-        assert(min_angle < desired_angle_min);
+
+//        std::cout << "max angle: " << max_angle << "\n" <<
+//                     "desired angle max: " << desired_angle_max << "\n" <<
+//                     "min angle: " << min_angle << "\n" <<
+//                     "desired angle min: " << desired_angle_min << "\n" <<
+//                     std::endl;
+
+        assert(max_angle >= desired_angle_max);
+        assert(min_angle <= desired_angle_min);
 
         int begin_index = (int) ((desired_angle_min - min_angle) / resolution);
         int end_index = (int) ((desired_angle_max - min_angle) / resolution) + 1;
@@ -74,6 +82,11 @@ range_1d::range_1d(sensor_msgs::LaserScanConstPtr ls_ptr, double desired_angle_m
 
         for (int i = begin_index; i != end_index; i++) {
             ranges.push_back(ls_ptr->ranges[i]);
+            if (ranges[i] > processing_range) {
+//                std::cout << "out side of processing range\n";
+                ranges[i] = processing_range;
+            }
+//            std::cout << "ranges[" << i << "]: " << ranges.back() << "\n";
         }
         max_angle = desired_angle_max;
         min_angle = desired_angle_min;
@@ -88,12 +101,14 @@ range_1d::range_1d(sensor_msgs::LaserScanConstPtr ls_ptr, double desired_angle_m
 
         size_t num_points = rbegin_index - rend_index;
         ranges.reserve(num_points);
-        //std::cout<<rbegin_index<<" | "<< num_points<<" | "<<rend_index<<std::endl;
+
         for (int i = rbegin_index; i > rend_index; i--) {
-            if(ranges[i] > processing_range) {
-                ranges[i] = max_range;
-            }
             ranges.push_back(ls_ptr->ranges[i]);
+            if(ranges[i] > processing_range) {
+//                std::cout << "out side of processing range\n";
+                ranges[i] = processing_range;
+            }
+//            std::cout << "ranges[" << i << "]: " << ranges.back() << "\n";
         }
 
         max_angle = desired_angle_max;

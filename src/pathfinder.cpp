@@ -6,7 +6,12 @@
 #include <functional>
 #include <algorithm>
 #include <cerrno>
-
+#include <iostream>
+#include <chrono>
+#include <thread>
+//extern "C"{
+//#include <eyebot.h>
+//}
 
 #define INVALID_STEERING 9999.0
 
@@ -15,23 +20,22 @@
  *
  * @param n - ros node handle
  */
-pathfinder::pathfinder(ros::NodeHandle n) : n(n), spin_rate(15), rate(spin_rate) {
+pathfinder::pathfinder() : spin_rate(15) {
+
     cur_rotate_velocity = 0.0;
     tar_linear_velocity = 0.0;
     tar_rotate_velocity = 0.0;
     cur_linear_velocity = 0.0;
-    applied_speed = 0.0;
+//    applied_speed = 0.0;
     cur_x = 0.0;
     cur_y = 0.0;
     orientation = 0.0;
     has_new_cone = false;
     has_new_laserscan = false;
-    use_laserscan = false;
-    publish_boundary = false;
-    publish_path = false;
-    publish_cones = false;
-    publish_ranges = false;
-    ctrl_by_topic = false;
+
+    VWSetPosition(0, 0, 0);
+    VWSetSpeed(0, 0);
+    LIDARSet(180, 0, 360);
 }
 
 /**
@@ -39,36 +43,11 @@ pathfinder::pathfinder(ros::NodeHandle n) : n(n), spin_rate(15), rate(spin_rate)
  *
  * @return true if success; false otherwise.
  */
-bool pathfinder::Config() {
+bool pathfinder::Config(int argc, char **argv) {
     bool status = true;
-    status &= read_parameters();
-    status &= setup_subscribers();
-    status &= setup_publishers();
-    rate = ros::Rate(spin_rate);
-    if(ctrl_by_topic) {
-        applied_speed = 0.0;
-    } else {
-        applied_speed = desired_speed;
-    }
+    status &= read_parameters(argc, argv);
 
     return status;
-}
-
-/**
- * pathfinder::PrintConfig
- *
- * @return true if success; false otherwise.
- */
-bool pathfinder::PrintConfig() {
-    std::string s_tab = "    ";
-    ROS_INFO_STREAM("\nodom_sub:\n" << s_tab << "topic name:\n" << s_tab + s_tab << odom_topic_name <<
-                                    "\ncones_sub:\n" << s_tab << "topic name:\n" << s_tab + s_tab << cones_topic_name <<
-                                    "\nlaser_sub:\n" << s_tab << "topic name:\n" << s_tab + s_tab << laser_topic_name <<
-                                    "\ncmdvel_pub:\n" << s_tab << "topic name:\n" << s_tab + s_tab << cmdvel_topic_name
-                                    <<
-                                    "\npath_pub:\n" << s_tab << "topic name:\n" << s_tab + s_tab << path_topic_name <<
-                                    "\n\nspin rate:\n" << s_tab << spin_rate << '\n');
-    return true;
 }
 
 /**
@@ -78,16 +57,16 @@ bool pathfinder::PrintConfig() {
  */
 bool pathfinder::PrintStatus() {
     static std::string s_tab = "    ";
-    ROS_INFO_STREAM("\npose:\n" << s_tab << "x:\n" << s_tab + s_tab << cur_x <<
-                                s_tab << "y:\n" << s_tab + s_tab << cur_y <<
-                                s_tab << "yaw:\n" << s_tab + s_tab << orientation <<
-                                "\nvelocity:\n" << s_tab << "current:\n" << s_tab + s_tab << "linear:\n"
-                                << s_tab + s_tab + s_tab << cur_linear_velocity <<
+    std::cout << "\npose:\n" << s_tab << "x:\n" << s_tab + s_tab << cur_x <<
+              s_tab << "y:\n" << s_tab + s_tab << cur_y <<
+              s_tab << "yaw:\n" << s_tab + s_tab << orientation <<
+              "\nvelocity:\n" << s_tab << "current:\n" << s_tab + s_tab << "linear:\n"
+              << s_tab + s_tab + s_tab << cur_linear_velocity <<
                                 s_tab + s_tab << "angular:\n" << s_tab + s_tab + s_tab << cur_rotate_velocity <<
-                                s_tab << "target:\n" << s_tab + s_tab << "linear:\n" << s_tab + s_tab + s_tab
-                                << tar_linear_velocity <<
+              s_tab << "target:\n" << s_tab + s_tab << "linear:\n" << s_tab + s_tab + s_tab
+              << tar_linear_velocity <<
                                 s_tab + s_tab << "angular:\n" << s_tab + s_tab + s_tab << tar_rotate_velocity <<
-                                "\ncones:\n" << s_tab << "number:\n" << s_tab + s_tab << cones.size() << '\n');
+              "\ncones:\n" << s_tab << "number:\n" << s_tab + s_tab << cones.size() << '\n';
     return true;
 }
 
@@ -100,53 +79,43 @@ bool pathfinder::Start() {
     // follow the path defined by cones until no more valid track is detected.
     bool status = true;
     int count = 0;
-    while (status && ros::ok()) {
+    while (status) {
         // attempt to read newest message
-        ros::spinOnce();
+//        std::cout << "start odom update\n";
+        odom_update();
+//        std::cout << "start laser update\n";
+        laser_update();
 
+//        std::cout << "check new laserscan\n";
         // if laserscan is used, find cones
-        if (use_laserscan) {
-            if (has_new_laserscan) {
-                has_new_laserscan = false;
-                if (find_cones()) {
-                    has_new_cone = true;
-                }
+        if (has_new_laserscan) {
+//            std::cout << "has new scan\n";
+            has_new_laserscan = false;
+            if (find_cones()) {
+                std::cout << "has new cones\n";
+                has_new_cone = true;
             }
         }
 
+
         // print status every 1 s
-        if (++count == spin_rate) {
-            status &= PrintStatus();
-            count = 0;
-        }
+//        if (++count == spin_rate) {
+//            status &= PrintStatus();
+//            count = 0;
+//        }
 
         if (has_new_cone) {
             has_new_cone = false;
+//            std::cout << "start drive\n";
+            status = drive();
 
-            drive();
-
-            if(publish_cones) {
-                visualise_cones(valid_cones, "valid_cones", MARKER_COLOR::RED);
-                ROS_INFO_STREAM("size of valid cones: "<<valid_cones.size());
-            }
-
-            if (publish_boundary) {
-                visualise_boundary();
-            }
-
-            if (publish_path) {
-                visualise_path();
-            }
-
-            if (publish_ranges) {
-                visualise_ranges();
-            }
-
+//            std::cout << "clear cones and ranges\n";
             cones.clear();
             valid_ranges.clear();
         }
 
-        rate.sleep();
+//        std::cout << "sleep\n";
+        sleep();
     }
 
     return status;
@@ -157,197 +126,95 @@ bool pathfinder::Start() {
  *
  * @return true if success; false otherwise.
  */
-bool pathfinder::read_parameters() {
-    std::string package_name = "pathfinder";
-    std::string parameter_name;
-    std::string *str_ptr = nullptr;
-    int *int_ptr = nullptr;
-    double *double_ptr = nullptr;
-    bool *bool_ptr = nullptr;
-
+bool pathfinder::read_parameters(int argc, char **argv) {
     bool status = true;
 
+    spin_rate = 15;
+    clustering_threshold = 0.2;
+    num_of_path_points = 5;
+    time_interval = 1.0 / num_of_path_points;
+    max_steering = 30.0 / 180.0 * M_PI;
+    processing_range = 4.5;
+    clearance_radius = 0.8;
+    apply_median_filter = false;
+    filter_size = 3;
+    desired_speed = 10;
+    dist_front_to_rear = 2.5;
 
-    parameter_name = "use_laserscan";
-    bool_ptr = &use_laserscan;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *bool_ptr);
-
-    parameter_name = "spin_rate";
-    int_ptr = &spin_rate;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *int_ptr);
-
-    parameter_name = "odom_topic";
-    str_ptr = &odom_topic_name;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *str_ptr);
-
-    parameter_name = "cones_topic";
-    str_ptr = &cones_topic_name;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *str_ptr);
-
-    parameter_name = "laser_topic";
-    str_ptr = &laser_topic_name;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *str_ptr);
-
-    parameter_name = "cmdvel_topic";
-    str_ptr = &cmdvel_topic_name;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *str_ptr);
-
-    parameter_name = "path_topic";
-    str_ptr = &path_topic_name;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *str_ptr);
-
-    parameter_name = "clustering_threshold";
-    double_ptr = &clustering_threshold;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *double_ptr);
-
-    parameter_name = "publish_path";
-    bool_ptr = &publish_path;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *bool_ptr);
-
-    parameter_name = "num_of_path_points";
-    int_ptr = &num_of_path_points;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *int_ptr);
-
-    parameter_name = "time_interval";
-    double_ptr = &time_interval;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *double_ptr);
-
-    parameter_name = "publish_cones";
-    bool_ptr = &publish_cones;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *bool_ptr);
-
-    parameter_name = "frame_id";
-    str_ptr = &frame_id;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *str_ptr);
-
-    parameter_name = "max_steering";
-    max_steering = 24.0;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, max_steering);
-    max_steering = max_steering / 180.0 * M_PI;
-    initial_range = steering_range(-2.0*max_steering, 2.0*max_steering, DIST_FRONT_TO_REAR);
-
-    parameter_name = "processing_range";
-    double_ptr = &processing_range;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *double_ptr);
-
-    parameter_name = "clearance_radius";
-    double_ptr = &clearance_radius;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *double_ptr);
-
-    parameter_name = "ranges_topic";
-    str_ptr = &ranges_topic_name;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *str_ptr);
-
-    parameter_name = "publish_ranges";
-    bool_ptr = &publish_ranges;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *bool_ptr);
-
-    parameter_name = "boundary_topic";
-    str_ptr = &boundary_topic_name;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *str_ptr);
-
-    parameter_name = "publish_boundary";
-    bool_ptr = &publish_boundary;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *bool_ptr);
-
-    parameter_name = "apply_median_filter";
-    bool_ptr = &apply_median_filter;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *bool_ptr);
-
-    parameter_name = "filter_size";
-    int_ptr = &filter_size;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *int_ptr);
-
-    parameter_name = "control_topic";
-    str_ptr = &ctrl_topic_name;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *str_ptr);
-
-    parameter_name = "control_by_topic";
-    bool_ptr = &ctrl_by_topic;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *bool_ptr);
-
-    parameter_name = "desired_speed";
-    double_ptr = &desired_speed;
-    status = status && n.getParam("/" + package_name + "/" + parameter_name, *double_ptr);
-
-
-    return status;
-}
-
-/**
- * pathfinder::setup_subscribers
- *
- * @return true if success; false otherwise.
- */
-bool pathfinder::setup_subscribers() {
-    bool status = true;
-
-    // odom_sub
-    status = status && !odom_topic_name.empty();
-    assert(!odom_topic_name.empty());
-    odom_sub = n.subscribe(odom_topic_name, 1, &pathfinder::odom_cb, this);
-
-    // cones_sub
-    if (!use_laserscan) {
-        status = status && !cones_topic_name.empty();
-        assert(!cones_topic_name.empty());
-        cones_sub = n.subscribe(cones_topic_name, 1, &pathfinder::cones_cb, this);
+    for (int i = 0; i < argc; i++) {
+        if (!strcmp(argv[i], "./demo")) {
+            continue;
+        } else if (!strcmp(argv[i], "--spin_rate")) {
+            i++;
+            spin_rate = std::stoi(argv[i]);
+        } else if (!strcmp(argv[i], "--clustering_threshold")) {
+            i++;
+            clustering_threshold = std::stod(argv[i]);
+        } else if (!strcmp(argv[i], "--num_of_path_points")) {
+            i++;
+            num_of_path_points = std::stoi(argv[i]);
+        } else if (!strcmp(argv[i], "--time_interval")) {
+            i++;
+            time_interval = std::stod(argv[i]);
+        } else if (!strcmp(argv[i], "--max_steering")) {
+            i++;
+            max_steering = std::stod(argv[i]) / 180.0 * M_PI;
+        } else if (!strcmp(argv[i], "--processing_range")) {
+            i++;
+            processing_range = std::stod(argv[i]);
+        } else if (!strcmp(argv[i], "--clearance_radius")) {
+            i++;
+            clearance_radius = std::stod(argv[i]);
+        } else if (!strcmp(argv[i], "--apply_median_filter")) {
+            i++;
+            if (!strcmp(argv[i], "false")) {
+                apply_median_filter = false;
+            } else if (!strcmp(argv[i], "true")) {
+                apply_median_filter = true;
+            }
+        } else if (!strcmp(argv[i], "--filter_size")) {
+            i++;
+            filter_size = std::stoi(argv[i]);
+        } else if (!strcmp(argv[i], "--desired_speed")) {
+            i++;
+            desired_speed = std::stod(argv[i]);
+        } else if (!strcmp(argv[i], "--distance_between_front_rear_wheels")) {
+            i++;
+            dist_front_to_rear = std::stod(argv[i]);
+        } else {
+            std::cout << "Invalid input: " << argv[i] << "\n";
+            std::cout << "Usage: ./demo <command> <value>\n" <<
+                      "Available Commands:\n" <<
+                      "    --spin_rate <int>    @define the spin rate of the program, default as 15.\n" <<
+                      "    --clustering_threshold <double>    @constant used for cone clustering, default as 0.2.\n" <<
+                      "    --num_of_path_points <int>    @num of points for path visualisation, default as 5.\n" <<
+                      "    --time_interval <double>    @time interval between each path point, default as 0.3333.\n" <<
+                      "    --max_steering <double>    @max steering in degree (positive), default as 24.0.\n" <<
+                      "    --processing_range <double>    @in meter (drop all data outside this range), default as 3.0.\n"
+                      <<
+                      "    --clearance_radius <double>    @in meter (collision free boundary), default as 1.8.\n" <<
+                      "    --apply_median_filter <bool>    @whether to use median filter upon laserscan, default as false.\n"
+                      <<
+                      "    --filter_size <int>    @filter length for median filter, default as 3.\n" <<
+                      "    --desired_speed <double>    @target speed in m/s, default as 3.0.\n" <<
+                      "    --distance_between_front_rear_wheels <double>    @distance between front rear wheels in m, default as 1.0.\n";
+            exit(-1);
+        }
     }
 
-    // laser_sub
-    if (use_laserscan) {
-        status = status && !laser_topic_name.empty();
-        assert(!laser_topic_name.empty());
-        laser_sub = n.subscribe(laser_topic_name, 1, &pathfinder::laser_cb, this);
-    }
-
-    if (ctrl_by_topic) {
-        status = status && !ctrl_topic_name.empty();
-        assert(!ctrl_topic_name.empty());
-        ctrl_sub = n.subscribe(ctrl_topic_name,1,&pathfinder::ctrl_cb, this);
-    }
-
-    return status;
-}
-
-/**
- * pathfinder::setup_publishers
- *
- * @return true if success; false otherwise.
- */
-bool pathfinder::setup_publishers() {
-    bool status = true;
-
-    // cmdvel_pub
-    status = status && !cmdvel_topic_name.empty();
-    assert(!cmdvel_topic_name.empty());
-    cmdvel_pub = n.advertise<geometry_msgs::Twist>(cmdvel_topic_name, 1);
-
-    // path_pub
-    if (publish_path) {
-        status = status && !path_topic_name.empty();
-        assert(!path_topic_name.empty());
-        path_pub = n.advertise<visualization_msgs::MarkerArray>(path_topic_name, 1);
-    }
-
-    if (publish_cones) {
-        status = status && !cones_topic_name.empty();
-        assert(!cones_topic_name.empty());
-        cones_pub = n.advertise<visualization_msgs::MarkerArray>(cones_topic_name, 1);
-    }
-
-    if (publish_ranges) {
-        status = status && !ranges_topic_name.empty();
-        assert(!ranges_topic_name.empty());
-        ranges_pub = n.advertise<visualization_msgs::MarkerArray>(ranges_topic_name, 1);
-    }
-
-    if (publish_boundary) {
-        status = status && !boundary_topic_name.empty();
-        assert(!boundary_topic_name.empty());
-        boundary_pub = n.advertise<visualization_msgs::MarkerArray>(boundary_topic_name, 1);
-    }
-
+    initial_range = steering_range(-2.0 * max_steering, 2.0 * max_steering, dist_front_to_rear);
+    std::cout << "Configurations:\n" <<
+              "spin rate: " << spin_rate << "\n" <<
+              "clustering threshold: " << clustering_threshold << "\n" <<
+              "num of path points: " << num_of_path_points << "\n" <<
+              "time interval: " << time_interval << "\n" <<
+              "max steering: " << max_steering << "\n" <<
+              "processing range: " << processing_range << "\n" <<
+              "clearance radius: " << clearance_radius << "\n" <<
+              "apply median filter: " << apply_median_filter << "\n" <<
+              "filter size: " << filter_size << "\n" <<
+              "desired speed: " << desired_speed << "\n" <<
+              std::endl;
     return status;
 }
 
@@ -356,39 +223,21 @@ bool pathfinder::setup_publishers() {
  *
  * @param msg - nav_msgs::OdometryConstPtr
  */
-void pathfinder::odom_cb(nav_msgs::OdometryConstPtr msg) {
-    assert(msg != nullptr);
+void pathfinder::odom_update() {
+    int x, y, phi, tspd, rspd;
+    VWGetPosition(&x, &y, &phi);
+    VWGetSpeed(&tspd, &rspd);
 
     // get x & y
-    cur_x = msg->pose.pose.position.x;
-    cur_y = msg->pose.pose.position.y;
+    cur_x = x / 1000.0;
+    cur_y = y / 1000.0;
 
     // get orientation
-    tf::Quaternion q;
-    tf::quaternionMsgToTF(msg->pose.pose.orientation, q);
-    orientation = tf::getYaw(q);
+    orientation = phi / 100.0;
 
     // get velocity
-    cur_linear_velocity = msg->twist.twist.linear.x;
-    cur_rotate_velocity = msg->twist.twist.angular.z;
-}
-
-/**
- * pathfinder::cones_cb
- *
- * @param msg - visualization_msgs::MarkerArrayConstPtr
- */
-void pathfinder::cones_cb(visualization_msgs::MarkerArrayConstPtr msg) {
-    assert(msg != nullptr);
-    assert(!msg->markers.empty());
-    has_new_cone = true;
-    cones.clear();
-    auto iter = msg->markers.begin();
-    for (; iter != msg->markers.end(); iter++) {
-//        TODO: find proper size of objects
-        cones.emplace_back((*iter).pose.position.x, (*iter).pose.position.y, 0.5);
-    }
-    ROS_INFO_STREAM("cones_size:" << cones.size());
+    cur_linear_velocity = tspd / 1000.0;
+    cur_rotate_velocity = rspd / 100.0;
 }
 
 /**
@@ -396,9 +245,20 @@ void pathfinder::cones_cb(visualization_msgs::MarkerArrayConstPtr msg) {
  *
  * @param msg - sensor_msgs::LaserScanConstPtr msg
  */
-void pathfinder::laser_cb(sensor_msgs::LaserScanConstPtr msg) {
-    assert(msg != nullptr);
-    assert(!msg->ranges.empty());
+void pathfinder::laser_update() {
+    int scan[360] = {0};
+    LIDARGet(scan);
+    LaserScan *msg = new LaserScan();
+
+    msg->angle_increment = 0.5 / 180.0 * M_PI;
+    msg->angle_max = 90.0 / 180.0 * M_PI;
+    msg->angle_min = -90.0 / 180.0 * M_PI;
+    msg->range_max = 20.0;
+
+    for (int i = 0; i < 360; i++) {
+        msg->ranges.push_back(scan[i] / 1000.0);
+//        std::cout << " scan[" << i << "]: " << msg->ranges.back() << "\n";
+    }
 
     // load ros sensor msg into range_1d
     has_new_laserscan = true;
@@ -417,44 +277,53 @@ void pathfinder::laser_cb(sensor_msgs::LaserScanConstPtr msg) {
 bool pathfinder::drive() {
 	
     // init range list
+//    std::cout << "init valid ranges\n";
     valid_ranges.clear();
     valid_ranges.push_back(initial_range);
     valid_cones.clear();
     bool stop_ = false;
-    
-
+    int count = 0;
+//    std::cout << "start iterate through the cones and identify the collision free steering ranges\n";
     // iterate through the cones and identify the collision free steering ranges
     for (auto cones_iter = cones.begin(); cones_iter != cones.end(); cones_iter++) {
         // check if the cone is outside of the processing range
         double dist_to_car = cones_iter->get_dist_to_point(point_2d(0.0,0.0));
-        ROS_INFO_STREAM("dist to car: "<<dist_to_car);
+//        std::cout << "cone " << count++ << " dist to car: " << dist_to_car << "\n";
         if (dist_to_car < processing_range) {
+//            std::cout << "inside of processing range\n";
             valid_cones.push_back(*cones_iter);
             // if the cone is inside the processing range
             // calculate the boundary of collision steering at given cone location
             // check existence of path
+//            std::cout << "start update steering ranges for this cone\n";
             if (!update_steering_ranges(*cones_iter)) {
+                std::cout << "no available path\n";
                 // no available path
                 // stop and return false
                 stop_ = true;
-                continue;
+                break;
             }
         }
 
     }
     
     if(stop_) {
-		//stop();
-		//return false;
+        std::cout << "stop due to no available path\n";
+        stop();
+        return false;
 	}
-    
 
+
+//    std::cout << "select the largest steering range (prefer as small change as possible to current steering)\n";
     // select the largest steering range (prefer as small change as possible to current steering)
     auto desired_range_iter = valid_ranges.begin();
-    double max_size = desired_range_iter->get_size();
-    double min_change = fabs(desired_range_iter->get_mean() - tar_steering_angle);
-
+    double max_size = 0;
+    double min_change = 999999999;
+    count = 0;
+    std::cout << "dynamic limit: [" << -max_steering << ',' << max_steering << "]\n";
+    bool has_valid_range = false;
     for (auto range_iter = valid_ranges.begin(); range_iter != valid_ranges.end(); range_iter++) {
+        std::cout << "range[" << count++ << "]: [" << range_iter->get_min() << ',' << range_iter->get_max() << "]\n";
         if(range_iter->get_max() < -max_steering) {
             continue;
         }
@@ -467,6 +336,8 @@ bool pathfinder::drive() {
             // update with larger range
             max_size = this_size;
             desired_range_iter = range_iter;
+            has_valid_range = true;
+            min_change = fabs(range_iter->get_mean() - tar_steering_angle);
         } else if (this_size == max_size) {
             // if range is same
             double this_change = fabs(range_iter->get_mean() - tar_steering_angle);
@@ -475,28 +346,47 @@ bool pathfinder::drive() {
                 // update with smaller change option
                 min_change = this_change;
                 desired_range_iter = range_iter;
+                has_valid_range = true;
             }
         }
     }
 
+    if (!has_valid_range) {
+        std::cout << "no valid ranges\n";
+        stop();
+        return false;
+    }
 
+    std::cout << "desired range: [" << desired_range_iter->get_min() << ',' << desired_range_iter->get_max() << "]\n";
     double steering_angle = desired_range_iter->get_mean();
+//    std::cout << "get initial steering angle decision: " << steering_angle << "\n";
     if(steering_angle < -max_steering) {
 		if(desired_range_iter->get_max() < -max_steering) {
+            std::cout << "the steering angle is outside of max steering\n";
+            std::cout << "stop\n";
 			stop();
 			return false;
 		}
-		steering_angle = -max_steering;
+        std::cout << "this steering angle is outside of max steering\n";
+        std::cout << "but steering rang is still fall inside max steering range\n";
+        steering_angle = -max_steering;
+        std::cout << "update steering angle to max: " << steering_angle << "\n";
     }
     if(steering_angle > max_steering) {
         if(desired_range_iter->get_min() > max_steering) {
-			stop();
+            std::cout << "the steering angle is outside of max steering\n";
+            std::cout << "stop\n";
+            stop();
 			return false;
 		}
+        std::cout << "this steering angle is outside of max steering\n";
+        std::cout << "but steering rang is still fall inside max steering range\n";
         steering_angle = max_steering;
+        std::cout << "update steering angle to max: " << steering_angle << "\n";
     }
     // drive using mean steering for that range
-    curve(steering_angle);
+    std::cout << "start curve based on steering angle: " << steering_angle << "\n";
+    curve(-steering_angle);
     return true;
 }
 
@@ -506,11 +396,12 @@ bool pathfinder::drive() {
  */
 void pathfinder::stop() {
     // stop
-    geometry_msgs::Twist cmdvel;
-    cmdvel.linear.x = 0.0;
-    cmdvel.angular.z = tar_steering_angle;
-    tar_linear_velocity = cmdvel.linear.x;
-    cmdvel_pub.publish(cmdvel);
+    int tspd = 0;
+    int rspd = 0;
+    tar_linear_velocity = 0.0;
+    std::cout << "linear velocity: " << tspd << "\n";
+    std::cout << "rotational velocity: " << rspd << "\n";
+    VWSetSpeed(tspd, rspd);
 }
 
 /**
@@ -520,19 +411,20 @@ void pathfinder::stop() {
  */
 void pathfinder::curve(double angle) {
     // curve
-    geometry_msgs::Twist cmdvel;
-    cmdvel.linear.x = applied_speed;
-    if (applied_speed == 0.0) {
-        cmdvel.angular.z = tar_steering_angle;
+    tar_linear_velocity = desired_speed;
+    tar_rotate_velocity = tar_linear_velocity * sin(tar_steering_angle) / dist_front_to_rear;
+    int tspd = (int) (tar_linear_velocity * 1000);
+    int rspd = 0;
+    if (desired_speed == 0.0) {
+        rspd = 0;
+        tar_steering_angle = 0;
     } else {
-        cmdvel.angular.z = angle;
+        rspd = (int) (tar_rotate_velocity * 100);
+        tar_steering_angle = angle;
     }
-    cmdvel_pub.publish(cmdvel);
-
-    tar_linear_velocity = cmdvel.linear.x;
-    tar_steering_angle = cmdvel.angular.z;
-    tar_rotate_velocity = tar_linear_velocity * sin(cmdvel.angular.z) / DIST_FRONT_TO_REAR;
-
+    std::cout << "linear velocity: " << tspd << "\n";
+    std::cout << "rotational velocity: " << rspd << "\n";
+    VWSetSpeed(tspd, rspd);
 }
 
 /**
@@ -564,131 +456,14 @@ bool pathfinder::find_cones() {
 
     // put clusters into point_2d vector
     cones.clear();
+    int count = 0;
     for (auto iter = clusters.begin(); iter != clusters.end(); iter++) {
         cones.emplace_back((*iter).get_x(), (*iter).get_y(), (*iter).size()/2.0);
+        std::cout << "cone[" << count++ << "]: (" << cones.back().get_x() << "," << cones.back().get_y() << ")\n";
+        std::cout << "cone[" << count++ << "]: dist to car is " << cones.back().get_dist_to_car() << "\n";
     }
 
     return !cones.empty();
-}
-
-bool pathfinder::visualise_path() {
-    static std::string ns = "/pathfinder/path";
-
-    // clear previous path
-    path_pub.publish(get_clear_markers(ns));
-
-    // color - RED
-    std_msgs::ColorRGBA color;
-    color.a = 1.0;
-    color.r = 1.0;
-
-    // generate msg fro new path
-    visualization_msgs::MarkerArray markers;
-    get_steering_marker(ns, tar_linear_velocity, tar_steering_angle, markers, color);
-    path_pub.publish(markers);
-}
-
-bool pathfinder::visualise_cones(std::vector<cone_2d> &tar_cones, std::string name, MARKER_COLOR color) {
-    static std::deque<std::string> ns_list;
-
-    // check empty of input vector
-    if (tar_cones.empty()) {
-        return false;
-    }
-
-    int ns_id = ns_list.size();
-    for (int i = 0; i < ns_list.size(); i++) {
-        if (ns_list[i] == name) {
-            ns_id = i;
-        }
-    }
-    if (ns_id == ns_list.size()) {
-        ns_list.push_back(name);
-    }
-
-    // clear any previous markers published
-    cones_pub.publish(get_clear_markers(name));
-
-    std_msgs::ColorRGBA colorRGBA;
-    colorRGBA.a = 1.0;
-
-    // auto color code
-    if (color == MARKER_COLOR::AUTO) {
-        color = static_cast<MARKER_COLOR>(ns_id % static_cast<int>(MARKER_COLOR::NUM_OF_COLOR));
-    }
-
-    // decode color code into ColorRGBA
-    switch (color) {
-        case MARKER_COLOR::BLACK:
-            break;
-
-        case MARKER_COLOR::BLUE:
-            colorRGBA.b = 1.0;
-            break;
-
-        case MARKER_COLOR::GREEN:
-            colorRGBA.g = 1.0;
-            break;
-
-        case MARKER_COLOR::RED:
-            colorRGBA.r = 1.0;
-            break;
-
-        case MARKER_COLOR::YELLOW:
-            colorRGBA.r = 1.0;
-            colorRGBA.g = 1.0;
-            break;
-
-        case MARKER_COLOR::WHITE:
-            colorRGBA.b = 1.0;
-            colorRGBA.g = 1.0;
-            colorRGBA.r = 1.0;
-            break;
-
-        default:
-            assert(false);
-            break;
-    }
-
-
-
-    // generate markers from input vector
-    visualization_msgs::MarkerArray markers;
-    for (int i = 0; i < tar_cones.size(); i++) {
-        double time_spent = time_interval * (i + 1.0);
-        visualization_msgs::Marker marker;
-        marker.ns = name;
-        marker.header.frame_id = "laser";
-        marker.action = visualization_msgs::Marker::ADD;
-        marker.type = visualization_msgs::Marker::CYLINDER;
-        marker.color = colorRGBA;
-        marker.scale.x = 0.2;
-        marker.scale.y = 0.2;
-        marker.scale.z = 0.5;
-        marker.lifetime = ros::Duration(rate);
-        tf::poseTFToMsg(tf::Transform(tf::createQuaternionFromRPY(0.0, 0.0, 0.0),
-                                      tf::Vector3(tar_cones[i].get_x(), tar_cones[i].get_y(), 0.0)),
-                        marker.pose);
-        marker.id = i;
-        markers.markers.push_back(marker);
-    }
-
-    // publish msg
-    cones_pub.publish(markers);
-}
-
-visualization_msgs::MarkerArray &pathfinder::get_clear_markers(std::string name) {
-    static visualization_msgs::MarkerArray markers = _get_clear_markers(frame_id);
-    markers.markers.back().ns = name;
-    return markers;
-}
-
-visualization_msgs::MarkerArray pathfinder::_get_clear_markers(std::string frame_id) {
-    visualization_msgs::MarkerArray markers;
-    markers.markers.resize(1);
-    markers.markers[0].header.frame_id = frame_id;
-    markers.markers[0].action = visualization_msgs::Marker::DELETEALL;
-    return markers;
 }
 
 bool pathfinder::update_steering_ranges(cone_2d &cone) {
@@ -805,16 +580,16 @@ double pathfinder::evaluate_boundary_steering(double x, double y, double shift) 
     }
     if(shift > 0.0) {
         if(len < 0.0 && len > -shift) {
-			ROS_INFO_STREAM(" shift:"<<shift<<",len:"<<len);
+            std::cout << " shift:" << shift << ",len:" << len;
             return INVALID_STEERING;
         }
     } else if (shift < 0.0) {
         if(len > 0.0 && len < -shift) {
-			ROS_INFO_STREAM(" shift:"<<shift<<",len:"<<len);
+            std::cout << " shift:" << shift << ",len:" << len;
             return INVALID_STEERING;
         }
     }
-    double rad = DIST_FRONT_TO_REAR / len;
+    double rad = dist_front_to_rear / len;
     if (rad > 1.0) {
         rad = 1.0;
     }
@@ -825,94 +600,19 @@ double pathfinder::evaluate_boundary_steering(double x, double y, double shift) 
     return asin(rad);
 }
 
-bool pathfinder::visualise_ranges() {
-    // clear previous path
-    ranges_pub.publish(get_clear_markers(" "));
-    std_msgs::ColorRGBA color;
-    color.a = 1.0;
-    int count = 0;
-    // generate msg fro new path
-    visualization_msgs::MarkerArray markers;
-    for(auto iter = valid_ranges.begin(); iter != valid_ranges.end(); iter++) {
-        color.g = 0.0;
-        color.b = 1.0;
-        get_steering_marker(std::to_string(count++),desired_speed, iter->get_max(), markers, color);
-        get_steering_marker(std::to_string(count++),desired_speed, iter->get_min(), markers, color);
-
-        color.b = 0.0;
-        color.g = 1.0;
-        get_steering_marker(std::to_string(count++),desired_speed, iter->get_mean(), markers, color);
+void pathfinder::sleep() {
+    static long long int max_time_interval_msec = 1000 / spin_rate;
+    static auto last_time = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
+    auto this_time = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
+    auto duration = this_time - last_time;
+    auto time_pass_msec = duration.count();
+    long long int time_to_sleep_msec;
+    if (time_pass_msec > max_time_interval_msec) {
+        time_to_sleep_msec = max_time_interval_msec;
+    } else {
+        time_to_sleep_msec = max_time_interval_msec - time_pass_msec;
     }
-
-    ranges_pub.publish(markers);
-
-    return false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(time_to_sleep_msec));
+    last_time = this_time;
 }
 
-bool pathfinder::get_steering_marker(std::string name,
-									 double speed,
-                                     double steering,
-                                     visualization_msgs::MarkerArray& markers,
-                                     std_msgs::ColorRGBA color) {
-    double turning_radius = DIST_FRONT_TO_REAR / sin(steering);
-    double rot_vel = speed / turning_radius;
-
-    for (int i = 0; i < num_of_path_points; i++) {
-        double time_spent = time_interval * (i + 1.0);
-        visualization_msgs::Marker marker;
-        marker.ns = name;
-        marker.header.frame_id = "base_link";
-        marker.action = visualization_msgs::Marker::ADD;
-        marker.type = visualization_msgs::Marker::ARROW;
-        marker.color = color;
-        marker.scale.x = 0.5;
-        marker.scale.y = 0.1;
-        marker.scale.z = 0.1;
-        marker.lifetime = ros::Duration(rate);
-        double yaw_change = time_spent * rot_vel;
-        tf::Quaternion q = tf::createQuaternionFromYaw(yaw_change);
-        tf::quaternionTFToMsg(q, marker.pose.orientation);
-
-        if(yaw_change == 0.0) {
-            marker.pose.position.x = time_spent*speed;
-        } else {
-            marker.pose.position.x = sin(yaw_change) * turning_radius;
-            marker.pose.position.y = turning_radius - cos(yaw_change) * turning_radius;
-        }
-        marker.id = i;
-        markers.markers.push_back(marker);
-    }
-
-    return false;
-}
-
-bool pathfinder::visualise_boundary() {
-    int count = 0;
-    double steering;
-    visualization_msgs::MarkerArray markers;
-    std_msgs::ColorRGBA color;
-    color.a = 1.0;
-    for(auto iter = valid_cones.begin(); iter != valid_cones.end(); iter++) {
-        steering = evaluate_boundary_steering(iter->get_x(), iter->get_y(), -clearance_radius);
-        color.b = 1.0;
-        color.g = 1.0;
-        color.r = 0.0;
-        get_steering_marker(std::to_string(count++),desired_speed,steering,markers, color);
-
-
-        steering = evaluate_boundary_steering(iter->get_x(), iter->get_y(), clearance_radius);
-        color.b = 0.0;
-        color.g = 0.0;
-        color.r = 1.0;
-        get_steering_marker(std::to_string(count++),desired_speed,steering,markers, color);
-    }
-
-    boundary_pub.publish(markers);
-    return false;
-}
-
-void pathfinder::ctrl_cb(std_msgs::BoolConstPtr msg) {
-    assert(msg != nullptr);
-    assert(msg->data == 1 or msg->data == 0);
-    applied_speed = msg->data ? desired_speed : 0.0;
-}
