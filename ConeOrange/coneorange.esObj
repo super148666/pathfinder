@@ -1,0 +1,22 @@
+# EyeSim Object File
+
+# Path to .obj file
+obj coneorange.obj
+
+# Object name
+name Cone-O
+
+# Scale
+scale 1
+
+# Mass properties: mass of object, followed by centre of mass
+# mass kg x y z
+mass 0.8 0 0 0
+
+# collider box <Vector3 centre> <Vector3 size>
+# collider capsule <Vector3 centre> <radius> <height> <x|y|z>
+# collider sphere <Vector3 centre> <radius>
+collider box 0 150 0 200 300 200
+
+# buoyancy <volume>
+buoyancy 0.0005

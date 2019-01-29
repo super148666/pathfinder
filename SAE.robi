@@ -1,0 +1,48 @@
+# robi description file for the EyeBot simulator EyeSim 6.0
+# by Andreas Koestler, Thomas Braunl, 2004
+
+# EyeSim 5.0 by Axel Waggershauser, Thomas Braunl, 2002
+# inspired by the parameter file for EyeSim 1.0 by
+# Thomas Braunl - Ghee Ong - Nicholas Tay, 1998
+
+# the format: valid lines contain a keyword followed by a list of
+# parameters seperated by white space. every line not starting with
+# a keyword is ignored.
+
+# every parameter describing a length is specified in milli meter
+# every parameter describing a angle is specified in degree
+
+drive  DIFFERENTIAL_DRIVE
+
+# the name of the robi, the used string is the rest of the line
+# behind the keyword without the surrounding white space
+name SAE
+
+# robot mass
+mass 110 0 0 0
+
+# the file name of the OpenInventor model used for this robi
+model SAE.obj 0 0 0 -90 0 0
+
+
+# Top
+collider box 400 500 300 0 600 -550 
+collider box 1100 450 1700 0 230 10 
+
+# axis is the distance between the center of the robi and the center of
+# the robis axis, e.g. a value of 0 means the axis is in the center of
+# the robi, if no value is given, it is set to 0.
+axis 20 0
+
+
+# color camera sensor definition:
+# "camera", relative position to the robi center (x,y,z), default
+# pan-tilt-angle (pan, tilt), maximum image width and height in pixel
+camera 0 1000 0 0 0 482 162
+
+# lidar position relative to robots centre x y z (in mm), and rotation x y z (in deg),
+# angular range [1...360], tilt angle to driving plane (in deg, -90..90), number of points
+0 2000 0  0 0 0  180 0 1000
+
+# wheel diameter [mm], max. rotational velocity [deg/s], encoder ticks/rev., wheel-base distance [mm]
+wheel  55  36000  1100  70
