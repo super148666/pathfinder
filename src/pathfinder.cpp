@@ -14,6 +14,17 @@
 //}
 
 #define INVALID_STEERING 9999.0
+#define DEFAULT_SPIN_RATE 15
+#define DEFAULT_CLUSTERING_THRESHOLD 0.2
+#define DEFAULT_NUM_OF_PATH_POINTS 5
+#define DEFAULT_TIME_INTERVAL (1.0/DEFAULT_NUM_OF_PATH_POINTS)
+#define DEFAULT_MAX_STEERING 30
+#define DEFAULT_PROCESSING_RANGE 4.5
+#define DEFAULT_CLEARANCE_RADIUS 0.8
+#define DEFAULT_APPLY_MEDIAN_FILTER false
+#define DEFAULT_FILTER_SIZE 3
+#define DEFAULT_DESIRED_SPEED 10
+#define DEFAULT_DIST_FRONT_TO_REAR 2.5
 
 /**
  * pathfinder::pathfinder - constructor
@@ -129,20 +140,20 @@ bool pathfinder::Start() {
 bool pathfinder::read_parameters(int argc, char **argv) {
     bool status = true;
 
-    spin_rate = 15;
-    clustering_threshold = 0.2;
-    num_of_path_points = 5;
-    time_interval = 1.0 / num_of_path_points;
-    max_steering = 30.0 / 180.0 * M_PI;
-    processing_range = 4.5;
-    clearance_radius = 0.8;
-    apply_median_filter = false;
-    filter_size = 3;
-    desired_speed = 10;
-    dist_front_to_rear = 2.5;
+    spin_rate = DEFAULT_SPIN_RATE;
+    clustering_threshold = DEFAULT_CLUSTERING_THRESHOLD;
+    num_of_path_points = DEFAULT_NUM_OF_PATH_POINTS;
+    time_interval = DEFAULT_TIME_INTERVAL;
+    max_steering = DEFAULT_MAX_STEERING / 180.0 * M_PI;
+    processing_range = DEFAULT_PROCESSING_RANGE;
+    clearance_radius = DEFAULT_CLEARANCE_RADIUS;
+    apply_median_filter = DEFAULT_APPLY_MEDIAN_FILTER;
+    filter_size = DEFAULT_FILTER_SIZE;
+    desired_speed = DEFAULT_DESIRED_SPEED;
+    dist_front_to_rear = DEFAULT_DIST_FRONT_TO_REAR;
 
     for (int i = 0; i < argc; i++) {
-        if (!strcmp(argv[i], "./demo")) {
+        if (i == 0 && strncmp(argv[i], "./", 2)==0) {
             continue;
         } else if (!strcmp(argv[i], "--spin_rate")) {
             i++;
@@ -185,19 +196,17 @@ bool pathfinder::read_parameters(int argc, char **argv) {
             std::cout << "Invalid input: " << argv[i] << "\n";
             std::cout << "Usage: ./demo <command> <value>\n" <<
                       "Available Commands:\n" <<
-                      "    --spin_rate <int>    @define the spin rate of the program, default as 15.\n" <<
-                      "    --clustering_threshold <double>    @constant used for cone clustering, default as 0.2.\n" <<
-                      "    --num_of_path_points <int>    @num of points for path visualisation, default as 5.\n" <<
-                      "    --time_interval <double>    @time interval between each path point, default as 0.3333.\n" <<
-                      "    --max_steering <double>    @max steering in degree (positive), default as 24.0.\n" <<
-                      "    --processing_range <double>    @in meter (drop all data outside this range), default as 3.0.\n"
-                      <<
-                      "    --clearance_radius <double>    @in meter (collision free boundary), default as 1.8.\n" <<
-                      "    --apply_median_filter <bool>    @whether to use median filter upon laserscan, default as false.\n"
-                      <<
-                      "    --filter_size <int>    @filter length for median filter, default as 3.\n" <<
-                      "    --desired_speed <double>    @target speed in m/s, default as 3.0.\n" <<
-                      "    --distance_between_front_rear_wheels <double>    @distance between front rear wheels in m, default as 1.0.\n";
+                      "    --spin_rate <int>    @define the spin rate of the program, default as " << DEFAULT_SPIN_RATE << ".\n" <<
+                      "    --clustering_threshold <double>    @constant used for cone clustering, default as " << DEFAULT_CLUSTERING_THRESHOLD << ".\n" <<
+                      "    --num_of_path_points <int>    @num of points for path visualisation, default as " << DEFAULT_NUM_OF_PATH_POINTS << ".\n" <<
+                      "    --time_interval <double>    @time interval between each path point, default as " << DEFAULT_TIME_INTERVAL << ".\n" <<
+                      "    --max_steering <double>    @max steering in degree (positive), default as " << DEFAULT_MAX_STEERING << ".\n" <<
+                      "    --processing_range <double>    @in meter (drop all data outside this range), default as " << DEFAULT_PROCESSING_RANGE << ".\n" <<
+                      "    --clearance_radius <double>    @in meter (collision free boundary), default as " << DEFAULT_CLEARANCE_RADIUS << ".\n" <<
+                      "    --apply_median_filter <bool>    @whether to use median filter upon laserscan, default as " << (DEFAULT_APPLY_MEDIAN_FILTER?"true":"false") << ".\n" <<
+                      "    --filter_size <int>    @filter length for median filter, default as " << DEFAULT_FILTER_SIZE << ".\n" <<
+                      "    --desired_speed <double>    @target speed in m/s, default as " << DEFAULT_DESIRED_SPEED << ".\n" <<
+                      "    --distance_between_front_rear_wheels <double>    @distance between front rear wheels in m, default as " << DEFAULT_DIST_FRONT_TO_REAR << ".\n";
             exit(-1);
         }
     }
